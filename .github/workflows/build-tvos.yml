@@ -1,0 +1,106 @@
+name: Build OrionTV tvOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    # Xcode 15.4 / tvOS 17.5 SDK - the pairing that OrionTV's Expo 51 / RN 0.74 expects.
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      EXPO_TV: "1"
+      EXPO_NO_TELEMETRY: "1"
+      CI: "1"
+    steps:
+      - name: Checkout OrionTV
+        uses: actions/checkout@v4
+        with:
+          repository: orion-lib/OrionTV
+          ref: master
+
+      - name: Checkout build scripts
+        uses: actions/checkout@v4
+        with:
+          path: .builder
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i tvos || true
+          pod --version
+          node --version
+
+      - name: Install JS dependencies
+        run: |
+          corepack enable
+          yarn --version
+          yarn install --network-timeout 600000
+
+      - name: Generate tvOS native project
+        run: npx expo prebuild --clean -p ios --no-install
+
+      - name: Patch pods that declare iOS only
+        run: |
+          # react-native-blob-util ships `s.platforms = { :ios => "11.0" }`, which makes
+          # CocoaPods refuse a tvOS target. The code itself builds on tvOS.
+          P=node_modules/react-native-blob-util/react-native-blob-util.podspec
+          if grep -q ':ios => "11.0"' "$P"; then
+            sed -i 's/{ :ios => "11.0" }/{ :ios => "11.0", :tvos => "13.4" }/' "$P"
+            echo "patched $P"; grep -n 'platforms' "$P"
+          else
+            echo "WARNING: podspec did not match expected pattern"; grep -n 'platforms' "$P" || true
+          fi
+
+      - name: Install CocoaPods
+        run: cd ios && pod install --repo-update
+
+      - name: Discover scheme
+        id: scheme
+        run: |
+          cd ios
+          WS=$(ls -d *.xcworkspace | head -1)
+          echo "workspace=$WS" >> "$GITHUB_OUTPUT"
+          echo "scheme=$(xcodebuild -list -workspace "$WS" -json | jq -r '.workspace.schemes[0]')" >> "$GITHUB_OUTPUT"
+
+      - name: Build (Release, unsigned)
+        run: |
+          set -x
+          cd ios
+          xcodebuild \
+            -workspace "${{ steps.scheme.outputs.workspace }}" \
+            -scheme "${{ steps.scheme.outputs.scheme }}" \
+            -configuration Release \
+            -sdk appletvos \
+            -destination 'generic/platform=tvOS' \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            NODE_BINARY="$(which node)" \
+            build
+
+      - name: Package .ipa
+        run: |
+          set -e
+          APP=$(find ios/build/Build/Products/Release-appletvos -maxdepth 1 -name '*.app' | head -1)
+          echo "app: $APP"
+          mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out
+          zip -qry OrionTV-tvos.ipa Payload
+          ls -lh OrionTV-tvos.ipa
+          unzip -l OrionTV-tvos.ipa | head -5
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrionTV-tvos-ipa
+          path: out/OrionTV-tvos.ipa
+          if-no-files-found: error
