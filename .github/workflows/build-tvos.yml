@@ -52,7 +52,7 @@ jobs:
           # CocoaPods refuse a tvOS target. The code itself builds on tvOS.
           P=node_modules/react-native-blob-util/react-native-blob-util.podspec
           if grep -q ':ios => "11.0"' "$P"; then
-            sed -i 's/{ :ios => "11.0" }/{ :ios => "11.0", :tvos => "13.4" }/' "$P"
+            perl -pi -e 's/\{ :ios => "11\.0" \}/{ :ios => "11.0", :tvos => "13.4" }/' "$P"
             echo "patched $P"; grep -n 'platforms' "$P"
           else
             echo "WARNING: podspec did not match expected pattern"; grep -n 'platforms' "$P" || true
