@@ -46,17 +46,23 @@ jobs:
       - name: Generate tvOS native project
         run: npx expo prebuild --clean -p ios --no-install
 
-      - name: Patch pods that declare iOS only
+      - name: Exclude unused iOS-only native modules
         run: |
-          # react-native-blob-util ships `s.platforms = { :ios => "11.0" }`, which makes
-          # CocoaPods refuse a tvOS target. The code itself builds on tvOS.
-          P=node_modules/react-native-blob-util/react-native-blob-util.podspec
-          if grep -q ':ios => "11.0"' "$P"; then
-            perl -pi -e 's/\{ :ios => "11\.0" \}/{ :ios => "11.0", :tvos => "13.4" }/' "$P"
-            echo "patched $P"; grep -n 'platforms' "$P"
-          else
-            echo "WARNING: podspec did not match expected pattern"; grep -n 'platforms' "$P" || true
-          fi
+          # These are listed as dependencies but never imported by OrionTV's code,
+          # and their Obj-C uses APIs that do not exist on tvOS
+          # (UIDocumentInteractionController, AssetsLibrary, QLPreviewController,
+          # WKHTTPCookieStore). Keep them installed for Android/phone builds,
+          # just don't autolink them into the tvOS app.
+          cat > react-native.config.js <<'EOF'
+          module.exports = {
+            dependencies: {
+              'react-native-blob-util': { platforms: { ios: null } },
+              'react-native-file-viewer': { platforms: { ios: null } },
+              '@react-native-cookies/cookies': { platforms: { ios: null } },
+            },
+          };
+          EOF
+          cat react-native.config.js
 
       - name: Install CocoaPods
         run: cd ios && pod install --repo-update
