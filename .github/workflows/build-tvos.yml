@@ -67,7 +67,14 @@ jobs:
           cd ios
           WS=$(ls -d *.xcworkspace | head -1)
           echo "workspace=$WS" >> "$GITHUB_OUTPUT"
-          echo "scheme=$(xcodebuild -list -workspace "$WS" -json | jq -r '.workspace.schemes[0]')" >> "$GITHUB_OUTPUT"
+          # The workspace lists every pod target as a scheme (`boost`, `Pods-...`).
+          # Pick the app scheme explicitly, never schemes[0].
+          SCHEME=$(xcodebuild -list -workspace "$WS" -json \
+            | jq -r '.workspace.schemes[] | select(startswith("Pods-") | not)' \
+            | grep -vx 'boost' | head -1)
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+          echo "all schemes:"; xcodebuild -list -workspace "$WS" -json | jq -r '.workspace.schemes[]'
+          echo "selected: $SCHEME"
 
       - name: Build (Release, unsigned)
         run: |
@@ -89,8 +96,16 @@ jobs:
       - name: Package .ipa
         run: |
           set -e
-          APP=$(find ios/build/Build/Products/Release-appletvos -maxdepth 1 -name '*.app' | head -1)
+          APP=$(find ios/build/Build/Products -name '*.app' -maxdepth 3 | head -1)
+          if [ -z "$APP" ]; then
+            echo "No .app produced. Build products:"; find ios/build/Build/Products -maxdepth 2 | head -40
+            exit 1
+          fi
           echo "app: $APP"
+          ls -la "$APP" | head -20
+          if [ ! -f "$APP/main.jsbundle" ]; then
+            echo "WARNING: no main.jsbundle - this is a debug-style build and will need Metro"
+          fi
           mkdir -p out/Payload
           cp -R "$APP" out/Payload/
           cd out
