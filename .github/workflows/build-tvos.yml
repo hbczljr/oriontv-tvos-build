@@ -66,14 +66,17 @@ jobs:
         run: |
           cd ios
           WS=$(ls -d *.xcworkspace | head -1)
+          # Workspace OrionTV.xcworkspace -> app scheme OrionTV.
+          # Every pod also appears as a scheme, so match the workspace name exactly.
+          APP="${WS%.xcworkspace}"
           echo "workspace=$WS" >> "$GITHUB_OUTPUT"
-          # The workspace lists every pod target as a scheme (`boost`, `Pods-...`).
-          # Pick the app scheme explicitly, never schemes[0].
           SCHEME=$(xcodebuild -list -workspace "$WS" -json \
-            | jq -r '.workspace.schemes[] | select(startswith("Pods-") | not)' \
-            | grep -vx 'boost' | head -1)
+            | jq -r --arg n "$APP" '.workspace.schemes[] | select(. == $n)' | head -1)
+          if [ -z "$SCHEME" ]; then
+            echo "No scheme named '$APP'. Available:"; xcodebuild -list -workspace "$WS" -json | jq -r '.workspace.schemes[]'
+            exit 1
+          fi
           echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
-          echo "all schemes:"; xcodebuild -list -workspace "$WS" -json | jq -r '.workspace.schemes[]'
           echo "selected: $SCHEME"
 
       - name: Build (Release, unsigned)
